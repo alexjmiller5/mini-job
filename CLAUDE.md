@@ -25,10 +25,14 @@ Instantiate `Settings()` inside `main()`, never at import time.
 
 ## Commands
 
+Standard verb set (see global CLAUDE.md) — the justfile is the interface,
+not a script catalog; one-offs go in `scripts/` and run directly.
+
 | Command | Purpose |
 |---|---|
-| `just run` | Run the job locally with secrets injected |
-| `just test` | pytest |
+| `just run` (alias `dev`) | Execute the job locally with secrets injected |
+| `just test` / `just check` / `just fmt` | pytest / ruff read-only / ruff fix |
+| `just logs` | Tail launchd logs (on the mini) |
 | `just store-op-token` | One-time Keychain setup per machine |
 
 ## TDD
