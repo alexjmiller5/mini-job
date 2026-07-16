@@ -22,9 +22,9 @@ fmt:
 
 # Tail the launchd logs (on the mini)
 logs:
-    tail -F data/launchd.log data/launchd.err.log
+    tail -F "$HOME/Library/Application Support/CHANGEME/launchd.log" "$HOME/Library/Application Support/CHANGEME/launchd.err.log"
 
-# One-time per machine: put the 1Password SA token in the login Keychain
+# Fallback (preferred: agenix tokenFile in nix-config): put the 1P SA token in the login Keychain
 store-op-token:
     ./scripts/store_op_token.sh CHANGEME-op-token
 
