@@ -72,11 +72,10 @@ Write the test in `tests/` first, then the `src/job/` code.
 6. Scraper needing real Chrome? Copy `installChrome` + the Xcode CLT /
    Rosetta 2 preflights from notion-finance-sync's `nix/darwin.nix`.
 
-## Not Alex? Owner-specific assumptions
+## Hardcoded owner assumptions
 
-The nix-darwin module is generic (all machine-specific values are options or
-CHANGEME-marked). Alex deploys it as a flake input to his private
-github.com/alexjmiller5/nix-config; you'd import the module into your own
-nix-darwin config. Launchd labels default to `com.alexmiller.*` — rename per
-the CHANGEME comments. Secrets assume a 1Password service account
-(scripts/store_op_token.sh) — swap for your own secret store if needed.
+The nix-darwin module is generic (machine-specific values are options or
+CHANGEME-marked), but the workflow is wired to Alex's setup for convenience:
+deployment goes through his nix-config flake, launchd labels default to the
+`com.alexmiller.*` prefix, and secrets assume his 1Password service account
+(scripts/store_op_token.sh).
