@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Scheduled job that runs on the mac mini — for work that needs a residential
 IP (scraping), Apple data (Messages, Screen Time, Contacts), or local
@@ -42,7 +42,7 @@ Instantiate `Settings()` inside `main()`, never at import time.
 
 ## Commands
 
-Standard verb set (see global CLAUDE.md) — the justfile is the interface,
+Standard verb set (see global AGENTS.md) — the justfile is the interface,
 not a script catalog; one-offs go in `scripts/` and run directly.
 
 | Command | Purpose |
