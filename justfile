@@ -26,6 +26,6 @@ logs:
 
 # Fallback (preferred: agenix tokenFile in nix-config): put the 1P SA token in the login Keychain
 store-op-token:
-    ./scripts/store_op_token.sh CHANGEME-op-token
+    ./scripts/store_op_token.sh CHANGEME-op-token 'op://CHANGEME-vault/CHANGEME-project-ci SA Token/password'
 
 # --- project-specific recipes below (one-offs live in scripts/, run directly) ---
