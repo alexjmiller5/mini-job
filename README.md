@@ -1,45 +1,24 @@
-# mini-job (template)
+# Mini Job template
 
-Template for scheduled jobs on the mac mini — the tier for work needing a
-residential IP, Apple data, or local hardware. Pattern extracted from
-`notion-finance-sync` and `screentime-backup` (both live on the mini).
+Python jobs that need residential networking, Apple data or local hardware.
+The application is a Nix package, with an optional nix-darwin launchd module and
+signed app wrapper for TCC-protected data.
 
-## Layout
+Use `just run`, `just test`, `just check`, `just fmt` and `just logs`.
+`nix build` builds the locked application. `nix-build tests/runner.nix --no-out-link`
+tests the credential seam without provider access.
 
-```
-src/job/          the job (plain Python)
-nix/darwin.nix    nix-darwin module: builds the app (uv2nix), wraps it in a
-                  signed .app, installs the launchd user agent
-flake.nix         packages.default (uv2nix venv) + darwinModules.default
-.env.tpl          secrets manifest (1Password op:// refs, committed)
-scripts/          store_op_token.sh (Keychain fallback) + one-offs
-justfile          run / test / check / fmt / logs / store-op-token
-```
+State and logs belong in the configured application-support directory, exported
+as `JOB_STATE_DIR`. The installed job runs packaged code, never a checkout.
 
-## How it deploys
+Consumer credentials come from supported native enrollment or caller-prepared
+environment variables. The optional `credentialCommands` module setting maps each
+variable name to a command returning its credential. Failed commands prevent the
+job from starting. Keep credential values out of Nix and source control. No
+provider account or machine-vault token is required by the template.
 
-The mini never checks out this repo. nix-config adds it as a flake input,
-enables `services.<name>`, and `darwin-rebuild switch` builds the venv from
-`uv.lock`, installs a signed `.app` at a stable path, and creates the launchd
-agent. Code changes deploy by push here + `nix flake update <input>` + switch
-there. State and logs live in `~/Library/Application Support/<name>/`
-(exported to the job as `JOB_STATE_DIR`).
+The signed wrapper is for jobs needing Full Disk Access. Document the manual TCC
+grant and any native sign-in in the generated project's README. A networking-only
+job can instead use a plain packaged home-manager service.
 
-**Secret zero:** the 1Password service-account token is age-encrypted in
-nix-config (agenix) and decrypted at activation — set `tokenFile =
-config.age.secrets.<name>-op-token.path`. Fallback: login Keychain via
-`just store-op-token`. The runner exports it and `op run`s the job with
-`.env.tpl` injected. No plaintext secrets on disk, ever.
-
-## Manual one-time steps per machine (cannot be codified)
-
-- **Full Disk Access** (only if the job reads TCC-protected data — Messages,
-  Screen Time…): System Settings → Privacy & Security → Full Disk Access →
-  the installed `.app`. Activation keeps the app's signature stable, so this
-  one grant survives every rebuild.
-- **First interactive login** for scraper jobs (establishes device-trust
-  browser profiles).
-
-## Bootstrap
-
-See the `new-project` skill, or the checklist in CLAUDE.md.
+See the checklist in [AGENTS.md](AGENTS.md) before generating a project.

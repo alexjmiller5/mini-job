@@ -1,13 +1,9 @@
-"""Settings from env vars — injected by `op run` (see scripts/run.sh).
-
-One field per line in .env.tpl. Instantiate Settings() inside main(),
-not at import time, so tests can run without secrets.
-"""
+"""Settings from the caller environment, resolved when the job starts."""
 
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # CHANGEME — e.g.:
-    # notion_api_key: str
+    # CHANGEME: add generic application settings. Keep provider-specific
+    # credential lookup in the caller's environment preparation.
     pass

@@ -53,6 +53,10 @@
 
       darwinModules.default = import ./nix/darwin.nix self;
 
+      checks = forAllSystems (pkgs: {
+        credentials = import ./tests/runner.nix { inherit pkgs; };
+      });
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = [ pkgs.uv pkgs.ruff pkgs.just pkgs.python313 ];

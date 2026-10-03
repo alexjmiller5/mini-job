@@ -1,4 +1,4 @@
-"""The job. Plain Python — launchd runs this via scripts/run.sh."""
+"""The job. Plain Python, executed by the packaged launchd runner."""
 
 import structlog
 

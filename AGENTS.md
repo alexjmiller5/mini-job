@@ -1,81 +1,45 @@
-# AGENTS.md
+# Mini Job template
 
-Scheduled job that runs on the mac mini — for work that needs a residential
-IP (scraping), Apple data (Messages, Screen Time, Contacts), or local
-hardware. Cloud-safe jobs do NOT belong here (see the `infra` skill).
+Scheduled Python jobs for residential networking, Apple data or local hardware.
+Cloud-safe jobs belong in the cloud-service template.
 
-## How it runs
+## Runtime and ownership
 
-Fully packaged deploy (`nix/darwin.nix`): `darwin-rebuild switch` in
-nix-config builds the app from `uv.lock` (uv2nix venv in the store), wraps it
-in a **signed .app** at a stable path, and installs a launchd user agent that
-runs it. The agent's runner resolves the 1Password SA token (agenix
-`tokenFile` preferred, login Keychain fallback) and execs
-`op run --env-file=.env.tpl -- python -m job.main`.
+The Nix package contains the locked application and dependencies. The app's module
+owns launchd setup, installed paths and runtime behavior. Deploy by pushing the
+project, updating its input in the consumer's machine configuration, then rebuilding
+and verifying the job. Never run a daemon from a working tree.
 
-The module is consumed by the mac mini's nix-config
-(github.com/alexjmiller5/nix-config) as a flake input — deploying means:
-add this repo as an input there, enable `services.<name>`, `just switch`.
+Consumer credentials are independently enrolled and revocable. Runtime accepts
+caller-prepared environment variables; the module's optional credentialCommands
+maps variable names to commands that return their values. A failed command stops
+the job. There is no required provider CLI, service-account token or machine-vault
+fallback. Never put credential values in Nix settings or source control.
 
-**Code changes deploy by commit + push** (here, then `nix flake update
-<input>` + `just switch` in nix-config) — the mini only ever runs pushed
-commits, never a local working tree. Verify the job actually works after a
-rebuild (`just logs` on the mini); never assume it did.
+The signed app wrapper supports jobs requiring TCC-protected Apple data. Its stable
+identity retains an explicit Full Disk Access grant across updates. Document that
+grant and any native account enrollment in the consuming project's README. A job
+that only needs networking can use a plain packaged home-manager service.
 
-**Why a .app:** TCC keys Full Disk Access on code identity. Activation keeps
-a stable self-signed cert and re-signs the .app every rebuild, so one manual
-FDA grant survives updates. The bundle executable must be a real Mach-O stub
-(a shebang script fails TCC's designated-requirement check on macOS 26).
+State and logs belong in the configured standard application-support directory,
+exported as JOB_STATE_DIR. No current-directory-relative state.
 
-Secret zero: the 1Password SA token lives age-encrypted in nix-config
-(agenix → `tokenFile`); Keychain via `just store-op-token` is the fallback.
-No plaintext secrets on disk, ever.
+## Development
 
-State/logs: `~/Library/Application Support/<name>/` (env `JOB_STATE_DIR`).
-Never write CWD-relative — launchd's default CWD is `/`; the agent sets
-`WorkingDirectory` to the state dir as a backstop.
+uv, pydantic-settings, httpx, structlog, pytest and Ruff. Construct settings inside
+main, never on import. Use just run, test, check, fmt and logs. Write behavior tests
+before implementation. The credential runner has a Nix integration check in
+tests/runner.nix; it executes credential-free, successful and failed-command cases.
 
-## Stack
+## New-project checklist
 
-uv · pydantic-settings (env config) · httpx · structlog · pytest · ruff.
-Instantiate `Settings()` inside `main()`, never at import time.
-
-## Commands
-
-Standard verb set (see global AGENTS.md) — the justfile is the interface,
-not a script catalog; one-offs go in `scripts/` and run directly.
-
-| Command | Purpose |
-|---|---|
-| `just run` (alias `dev`) | Execute the job locally with secrets injected |
-| `just test` / `just check` / `just fmt` | pytest / ruff read-only / ruff fix |
-| `just logs` | Tail launchd logs (on the mini) |
-| `just store-op-token` | Keychain token fallback (prefer agenix in nix-config) |
-
-## TDD
-
-Write the test in `tests/` first, then the `src/job/` code.
-
-## New-project checklist (delete this section after setup)
-
-1. Replace every `CHANGEME` (pyproject, flake, darwin.nix service
-   name/label/stateDir/keychainService/bundleId/appName/appInstallPath/
-   signingIdentity, justfile logs path + token name).
-2. Fill `.env.tpl`; add matching fields to `src/job/config.py`.
-3. `uv sync && just test`; `nix flake check` (or at least
-   `nix build .#packages.aarch64-darwin.default`) to prove the package builds.
-4. In nix-config: add the flake input, enable `services.<name>`, add the
-   agenix `op-token` secret + `tokenFile`, `just switch`.
-5. Manual steps that can't be codified go in this repo's README: FDA grant to
-   the installed .app (only if the job reads TCC-protected data), first
-   interactive login for scrapers.
-6. Scraper needing real Chrome? Copy `installChrome` + the Xcode CLT /
-   Rosetta 2 preflights from notion-finance-sync's `nix/darwin.nix`.
-
-## Hardcoded owner assumptions
-
-The nix-darwin module is generic (machine-specific values are options or
-CHANGEME-marked), but the workflow is wired to Alex's setup for convenience:
-deployment goes through his nix-config flake, launchd labels default to the
-`com.alexmiller.*` prefix, and secrets assume his 1Password service account
-(scripts/store_op_token.sh).
+1. Choose the project's Title and replace CHANGEME names throughout the template.
+2. Add generic application settings; keep personal configuration outside the repo.
+3. Confirm repository visibility and analytics preference with the user.
+4. Fill .env.tpl only for operator/server/CI secrets the project actually owns.
+   Native consumer enrollment does not require a provider service-account bootstrap.
+5. Run just test, just check and nix build. Use a project-specific external uv
+   environment path in the justfile so iCloud checkouts contain no environment.
+6. Add the package/module to the consumer's declarative machine configuration when
+   deployment is authorized; rebuild and verify it. Document user-only enrollment
+   and TCC grants. Remove this checklist from the generated project.

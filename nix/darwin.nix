@@ -2,16 +2,16 @@
 # Pattern proven by the notion-finance-sync and screentime-backup deployments.
 #
 # `darwin-rebuild switch` builds the app from uv.lock (uv2nix), wraps it in a
-# signed .app at a stable path, and installs the launchd agent — no repo
+# signed .app at a stable path, and installs the launchd agent - no repo
 # checkout on the mini, no `uv sync`, no config file to place. Deploying a code
 # change = push here, `nix flake update <input>` + switch in nix-config.
 #
-# Why a .app: TCC (Full Disk Access — Messages, Screen Time, etc.) keys grants
+# Why a .app: TCC (Full Disk Access - Messages, Screen Time, etc.) keys grants
 # on code identity. Activation maintains a stable self-signed cert (created
 # once, idempotent) and re-signs the .app with it every rebuild, so ONE manual
 # FDA grant survives every update. The bundle executable must be a real Mach-O:
 # a shebang script as CFBundleExecutable runs as /bin/zsh and fails TCC's
-# designated-requirement check (grant recorded, access still denied — hit on
+# designated-requirement check (grant recorded, access still denied - hit on
 # macOS 26). So the executable is a tiny signed stub that execs the runner;
 # FDA inherits across the exec.
 #
@@ -20,7 +20,7 @@
 #
 # Irreducibly manual, document in the consuming repo's README:
 #   - the FDA grant itself (System Settings → Privacy & Security → Full Disk
-#     Access → the .app) — TCC is SIP-protected, GUI-only
+#     Access → the .app) - TCC is SIP-protected, GUI-only
 #   - first interactive login for scraper jobs (device-trust cookies)
 #
 # Scraper jobs needing real Chrome: copy the `installChrome` homebrew-cask
@@ -33,30 +33,7 @@ let
   cfg = config.services.mini-job; # CHANGEME: rename to the job's name
   venv = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
-  # Resolve the OP token (agenix file preferred, Keychain fallback), then run
-  # the job with secrets injected from the committed .env.tpl (in the flake
-  # source, so it's in the store alongside the venv).
-  runner = pkgs.writeShellScript "mini-job-run" ''
-    set -euo pipefail
-    export PATH="${lib.makeBinPath [ cfg.opPackage pkgs.coreutils ]}:/usr/bin:/bin"
-    export JOB_STATE_DIR=${lib.escapeShellArg cfg.stateDir}
-    mkdir -p "$JOB_STATE_DIR"
-
-    token=""
-    token_file=${lib.escapeShellArg (toString (cfg.tokenFile or ""))}
-    if [ -n "$token_file" ] && [ -r "$token_file" ]; then
-      token="$(cat "$token_file")"
-    else
-      token="$(/usr/bin/security find-generic-password -a ${lib.escapeShellArg cfg.user} -s ${lib.escapeShellArg cfg.keychainService} -w 2>/dev/null || true)"
-    fi
-    if [ -z "$token" ]; then
-      echo "ERROR: no 1Password token (agenix file '$token_file' unreadable and Keychain item '${cfg.keychainService}' missing)." >&2
-      exit 1
-    fi
-    export OP_SERVICE_ACCOUNT_TOKEN="$token"
-    unset token
-    exec op run --env-file=${self}/.env.tpl -- ${venv}/bin/python -m job.main
-  '';
+  runner = import ./runner.nix { inherit pkgs lib cfg venv; };
 
   # The .app bundle: a tiny Mach-O exec that hands off to the runner. Built
   # unsigned in the store; activation copies it to a stable path and codesigns it.
@@ -93,14 +70,14 @@ in
     user = lib.mkOption {
       type = lib.types.str;
       description = "Login user the job runs as.";
-      example = "alexmiller";
+      example = "local-user";
     };
 
     stateDir = lib.mkOption {
       type = lib.types.str;
       default = "/Users/${cfg.user}/Library/Application Support/mini-job"; # CHANGEME
       defaultText = lib.literalExpression ''"/Users/''${user}/Library/Application Support/mini-job"'';
-      description = "Writable dir for state, logs, sessions — exported to the job as JOB_STATE_DIR.";
+      description = "Writable dir for state, logs, sessions - exported to the job as JOB_STATE_DIR.";
     };
 
     hour = lib.mkOption {
@@ -115,26 +92,15 @@ in
       description = "Minute the job fires.";
     };
 
-    tokenFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = ''
-        Path to a file containing the 1Password service-account token (e.g. an
-        agenix-decrypted secret: `config.age.secrets.op-token.path`). Preferred —
-        the token is the bootstrap secret, so it can't come from `op` itself.
-        If null/unreadable, the runner falls back to the Keychain item.
-      '';
-    };
-
-    keychainService = lib.mkOption {
-      type = lib.types.str;
-      default = "mini-job-op-token"; # CHANGEME
-      description = "Keychain generic-password service holding the OP token (fallback when tokenFile is unset; stored via `just store-op-token`).";
+    credentialCommands = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.listOf lib.types.str);
+      default = { };
+      description = "Environment variable names mapped to commands returning caller credentials. Commands must exit successfully. No provider or vault knowledge belongs in the job.";
     };
 
     bundleId = lib.mkOption {
       type = lib.types.str;
-      default = "com.alexmiller.mini-job"; # CHANGEME
+      default = "org.example.mini-job"; # CHANGEME
       description = "CFBundleIdentifier of the generated .app.";
     };
 
@@ -160,19 +126,20 @@ in
       '';
     };
 
-    opPackage = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs._1password-cli;
-      defaultText = lib.literalExpression "pkgs._1password-cli";
-      description = "The 1Password CLI package.";
-    };
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = lib.mapAttrsToList
+      (name: command: {
+        assertion = builtins.match "[A-Za-z_][A-Za-z0-9_]*" name != null && command != [ ];
+        message = "Job credentialCommands require valid environment names and nonempty commands.";
+      })
+      cfg.credentialCommands;
+
     system.activationScripts.postActivation.text = lib.mkAfter ''
       # 1. Ensure a stable self-signed code-signing cert in the System keychain.
       #    Created ONCE (idempotent) and reused every rebuild, so the .app's
-      #    signature — and thus the one-time Full Disk Access grant — stays stable.
+      #    signature - and thus the one-time Full Disk Access grant - stays stable.
       if ! /usr/bin/security find-certificate -c ${lib.escapeShellArg cfg.signingIdentity} /Library/Keychains/System.keychain >/dev/null 2>&1; then
         echo "creating code-signing identity ${cfg.signingIdentity} (one-time)..."
         _t="$(/usr/bin/mktemp -d)"
@@ -181,7 +148,7 @@ in
         # non-empty p12 password: macOS `security` rejects empty-password PKCS12 (MAC verification fails)
         /usr/bin/openssl pkcs12 -export -inkey "$_t/key.pem" -in "$_t/cert.pem" -out "$_t/id.p12" -passout pass:mini-job-p12
         /usr/bin/security import "$_t/id.p12" -k /Library/Keychains/System.keychain -P mini-job-p12 -T /usr/bin/codesign -A
-        # NB: no add-trusted-cert — it needs a GUI auth prompt (fails over SSH), and
+        # NB: no add-trusted-cert - it needs a GUI auth prompt (fails over SSH), and
         # it's unnecessary: codesign signs fine with an untrusted self-signed cert
         # and TCC matches FDA by the designated requirement, not trust.
         /bin/rm -rf "$_t"
@@ -199,9 +166,10 @@ in
       /usr/bin/codesign --force --sign ${lib.escapeShellArg cfg.signingIdentity} ${lib.escapeShellArg cfg.appInstallPath}
     '';
 
-    launchd.user.agents.mini-job = { # CHANGEME: rename
+    launchd.user.agents.mini-job = {
+      # CHANGEME: rename
       serviceConfig = {
-        Label = "com.alexmiller.mini-job"; # CHANGEME: rename
+        Label = "org.example.mini-job"; # CHANGEME: rename
         ProgramArguments = [ appExe ];
         # launchd's default CWD is "/" (read-only); anything writing CWD-relative
         # paths (e.g. seleniumbase downloads) needs a writable working dir.

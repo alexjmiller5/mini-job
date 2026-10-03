@@ -1,12 +1,13 @@
 set shell := ["bash", "-cu"]
 export PYTHONPATH := "src"
+export UV_PROJECT_ENVIRONMENT := env_var("HOME") + "/.cache/uv-venvs/mini-job-template"
 
 default:
     @just --list
 
-# Execute the job locally with secrets injected
+# Execute the job with the caller's environment
 run:
-    op run --env-file=.env.tpl -- uv run python -m job.main
+    uv run python -m job.main
 
 alias dev := run
 
@@ -23,9 +24,5 @@ fmt:
 # Tail the launchd logs (on the mini)
 logs:
     tail -F "$HOME/Library/Application Support/CHANGEME/launchd.log" "$HOME/Library/Application Support/CHANGEME/launchd.err.log"
-
-# Fallback (preferred: agenix tokenFile in nix-config): put the 1P SA token in the login Keychain
-store-op-token:
-    ./scripts/store_op_token.sh CHANGEME-op-token 'op://CHANGEME-vault/CHANGEME-project-ci SA Token/password'
 
 # --- project-specific recipes below (one-offs live in scripts/, run directly) ---
