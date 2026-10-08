@@ -39,13 +39,17 @@ offline job use the shared Life Data form below.
 
 ## Credentials
 
-- The job holds its OWN credential, minted by the service for this caller:
-  Life Data `life token create` with exact grants (`subscriptions:consume:<id>`
-  plus `tables:read:<table>` for every subscription source, column-level
-  `tables:read:`/`tables:patch:` grants for result columns,
-  `files:read:`/`files:write:<prefix>/`), or app-native browser enrollment
-  (`screentime-ingest login`). Never an operator, admin, CI or machine-vault
-  token. Rotating or revoking it touches only this job.
+- The job holds its OWN credential, minted by the service for this caller.
+  Life Data: follow its consumer-access standard (`docs/consumer-access.md`):
+  the operator adds a named profile with the exact grants to the hub's
+  `ENROLLMENT_PROFILES` (`subscriptions:consume:<id>` plus `tables:read:<table>`
+  for every subscription source, column `tables:read:`/`tables:patch:` grants
+  for result columns, `files:read:`/`files:write:<prefix>/`), registers any
+  file prefix, then enrolls headlessly: `life login --profile <id> --start
+  <state>`, the owner approves the printed link, `life login --claim <state>
+  --wait` prints the token once. A service of its own uses app-native browser
+  enrollment (`screentime-ingest login`). Never an operator, admin, CI or
+  machine-vault token. Rotating or revoking it touches only this job.
 - **Seam:** `JOB_TOKEN` (literal) or `JOB_TOKEN_COMMAND` (a JSON argv whose
   stdout is the token). The app knows no secret store. It reads the
   credential once, holds it in memory and rereads it after a rejection, so
@@ -94,8 +98,9 @@ redelivery until ACK, ACK only after success, credential reread, Retry-After.
 2. Implement `handle()` and its reconciliation; add generic settings only.
 3. Confirm repository visibility and analytics preference with the user.
 4. Create the service side: catalog the columns the job reads/writes, the
-   subscription, and the job's token with exact grants. Store the operator's
-   copy in the project vault; enroll the job's copy in the mini's Keychain.
+   subscription, the enrollment profile and the job's enrolled token. Store
+   the operator's copy in the project vault; put the job's copy in the mini's
+   Keychain.
 5. `just test`, `just check`, `nix build`. Keep the uv environment outside the
    (iCloud) checkout via `UV_PROJECT_ENVIRONMENT`.
 6. Add the flake input and `services.<slug>` to the consumer's nix-config,
