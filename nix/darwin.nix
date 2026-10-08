@@ -1,51 +1,44 @@
-# nix-darwin module: the job as a packaged launchd USER agent on the mac mini.
-# Pattern proven by the notion-finance-sync and screentime-backup deployments.
+# nix-darwin module: the job as a long-lived launchd USER agent (`job watch`)
+# holding an outbound long poll open against its service. Nothing reaches into
+# this machine. Options are generic; the consumer's config supplies only the
+# service URL, its subscription and how to read its own credential.
 #
-# `darwin-rebuild switch` builds the app from uv.lock (uv2nix), wraps it in a
-# signed .app at a stable path, and installs the launchd agent - no repo
-# checkout on the mini, no `uv sync`, no config file to place. Deploying a code
-# change = push here, `nix flake update <input>` + switch in nix-config.
+# Runs in the login session (gui/<uid> domain) so a credentialCommand can read
+# the login Keychain, which ssh-descended shells cannot.
 #
-# Why a .app: TCC (Full Disk Access - Messages, Screen Time, etc.) keys grants
-# on code identity. Activation maintains a stable self-signed cert (created
-# once, idempotent) and re-signs the .app with it every rebuild, so ONE manual
-# FDA grant survives every update. The bundle executable must be a real Mach-O:
-# a shebang script as CFBundleExecutable runs as /bin/zsh and fails TCC's
-# designated-requirement check (grant recorded, access still denied - hit on
-# macOS 26). So the executable is a tiny signed stub that execs the runner;
-# FDA inherits across the exec.
-#
-# Runs as a USER agent (login session) so it has the login Keychain, Messages
-# DB, Chrome profiles, etc. when the job needs them.
-#
-# Irreducibly manual, document in the consuming repo's README:
-#   - the FDA grant itself (System Settings → Privacy & Security → Full Disk
-#     Access → the .app) - TCC is SIP-protected, GUI-only
-#   - first interactive login for scraper jobs (device-trust cookies)
-#
-# Scraper jobs needing real Chrome: copy the `installChrome` homebrew-cask
-# option and the Xcode CLT + Rosetta 2 activation preflights from
-# notion-finance-sync's nix/darwin.nix.
+# fullDiskAccess: TCC keys grants on code identity, so jobs reading Apple data
+# run inside a signed .app at a stable path. Activation keeps one self-signed
+# cert (created once) and re-signs every rebuild, so ONE manual grant survives
+# updates. The bundle executable must be a real Mach-O (a shebang script fails
+# TCC's designated-requirement check on macOS 26), so it is a tiny stub that
+# execs the job; FDA inherits across the exec. The grant itself is GUI-only:
+# document it in the generated project's README.
 self:
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.services.mini-job; # CHANGEME: rename to the job's name
-  venv = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  cfg = config.services.mini-job; # CHANGEME: services.<slug>
+  fda = cfg.fullDiskAccess;
+  exe = lib.getExe' cfg.package "job"; # CHANGEME: the executable name
 
-  runner = import ./runner.nix { inherit pkgs lib cfg venv; };
+  environment = {
+    HOME = "/Users/${cfg.user}";
+    JOB_SERVICE_URL = cfg.serviceUrl; # CHANGEME: the job's env prefix
+    JOB_SUBSCRIPTION_ID = cfg.subscriptionId;
+    JOB_STATE_DIR = cfg.stateDir;
+  } // lib.optionalAttrs (cfg.credentialCommand != [ ]) {
+    JOB_TOKEN_COMMAND = builtins.toJSON cfg.credentialCommand;
+  } // cfg.environment;
 
-  # The .app bundle: a tiny Mach-O exec that hands off to the runner. Built
-  # unsigned in the store; activation copies it to a stable path and codesigns it.
   appBundle = pkgs.runCommandCC "mini-job-app" { } ''
     mkdir -p "$out/Contents/MacOS"
     cat > "$out/Contents/Info.plist" <<'PLIST'
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0"><dict>
-      <key>CFBundleIdentifier</key><string>${cfg.bundleId}</string>
-      <key>CFBundleName</key><string>${cfg.appName}</string>
-      <key>CFBundleExecutable</key><string>${cfg.appName}</string>
+      <key>CFBundleIdentifier</key><string>${cfg.label}</string>
+      <key>CFBundleName</key><string>${fda.appName}</string>
+      <key>CFBundleExecutable</key><string>${fda.appName}</string>
       <key>CFBundlePackageType</key><string>APPL</string>
       <key>LSBackgroundOnly</key><true/>
     </dict></plist>
@@ -53,134 +46,130 @@ let
     cat > stub.c <<EOF
     #include <unistd.h>
     int main(int argc, char **argv) {
-      argv[0] = (char *)"${runner}";
-      execv("${runner}", argv);
+      argv[0] = (char *)"${exe}";
+      execv("${exe}", argv);
       return 127;
     }
     EOF
-    $CC -O2 -o "$out/Contents/MacOS/${cfg.appName}" stub.c
+    $CC -O2 -o "$out/Contents/MacOS/${fda.appName}" stub.c
   '';
-
-  appExe = "${cfg.appInstallPath}/Contents/MacOS/${cfg.appName}";
+  appPath = "/Applications/${fda.appName}.app";
 in
 {
   options.services.mini-job = {
-    enable = lib.mkEnableOption "the CHANGEME scheduled job";
+    enable = lib.mkEnableOption "the CHANGEME long-polling job";
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+      description = "The installed job package.";
+    };
 
     user = lib.mkOption {
       type = lib.types.str;
-      description = "Login user the job runs as.";
+      description = "Login user whose session runs the agent and owns its state.";
       example = "local-user";
+    };
+
+    serviceUrl = lib.mkOption {
+      type = lib.types.str;
+      description = "HTTPS origin of the service the job long-polls.";
+      example = "https://hub.example.com";
+    };
+
+    subscriptionId = lib.mkOption {
+      type = lib.types.str;
+      description = "The service subscription this job consumes.";
+    };
+
+    credentialCommand = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = ''
+        argv printing this job's own credential, run by the job in the agent's
+        login session (e.g. a login-Keychain lookup). Never put the credential
+        itself in Nix.
+      '';
+      example = [ "/usr/bin/security" "find-generic-password" "-s" "mini-job" "-a" "hub" "-w" ];
     };
 
     stateDir = lib.mkOption {
       type = lib.types.str;
-      default = "/Users/${cfg.user}/Library/Application Support/mini-job"; # CHANGEME
-      defaultText = lib.literalExpression ''"/Users/''${user}/Library/Application Support/mini-job"'';
-      description = "Writable dir for state, logs, sessions - exported to the job as JOB_STATE_DIR.";
+      default = "/Users/${cfg.user}/.local/state/mini-job"; # CHANGEME
+      defaultText = lib.literalExpression ''"/Users/''${user}/.local/state/mini-job"'';
+      description = "State and logs (XDG state dir), exported to the job as JOB_STATE_DIR.";
     };
 
-    hour = lib.mkOption {
-      type = lib.types.int;
-      default = 3;
-      description = "Hour (0-23, local time) the job fires.";
-    };
-
-    minute = lib.mkOption {
-      type = lib.types.int;
-      default = 30;
-      description = "Minute the job fires.";
-    };
-
-    credentialCommands = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.listOf lib.types.str);
+    environment = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
       default = { };
-      description = "Environment variable names mapped to commands returning caller credentials. Commands must exit successfully. No provider or vault knowledge belongs in the job.";
+      description = "Extra nonsecret job settings (JOB_* variables).";
     };
 
-    bundleId = lib.mkOption {
+    label = lib.mkOption {
       type = lib.types.str;
-      default = "org.example.mini-job"; # CHANGEME
-      description = "CFBundleIdentifier of the generated .app.";
+      default = "org.example.mini-job"; # CHANGEME: com.<owner>.<slug>[.<job>], immutable once shipped
+      description = "launchd Label (and bundle id when fullDiskAccess is on).";
     };
 
-    appName = lib.mkOption {
-      type = lib.types.str;
-      default = "MiniJob"; # CHANGEME
-      description = "Name of the generated .app and its executable.";
+    fullDiskAccess = {
+      enable = lib.mkEnableOption "running inside a signed .app that can hold a Full Disk Access grant";
+      appName = lib.mkOption {
+        type = lib.types.str;
+        default = "MiniJob"; # CHANGEME
+        description = "Name of the .app installed in /Applications (the thing granted Full Disk Access).";
+      };
+      signingIdentity = lib.mkOption {
+        type = lib.types.str;
+        default = "mini-job-signing"; # CHANGEME
+        description = "Common name of the stable self-signed code-signing cert (System keychain), created at activation if absent.";
+      };
     };
-
-    appInstallPath = lib.mkOption {
-      type = lib.types.str;
-      default = "/Applications/MiniJob.app"; # CHANGEME
-      description = "Stable path the signed .app is installed to (the thing you grant Full Disk Access).";
-    };
-
-    signingIdentity = lib.mkOption {
-      type = lib.types.str;
-      default = "mini-job-signing"; # CHANGEME
-      description = ''
-        Common name of the self-signed code-signing cert (System keychain, so root
-        can sign at activation). Created automatically at activation if absent.
-        A stable cert => stable designated requirement => FDA grant persists.
-      '';
-    };
-
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = lib.mapAttrsToList
-      (name: command: {
-        assertion = builtins.match "[A-Za-z_][A-Za-z0-9_]*" name != null && command != [ ];
-        message = "Job credentialCommands require valid environment names and nonempty commands.";
-      })
-      cfg.credentialCommands;
+    assertions = [{
+      assertion = !(cfg.environment ? JOB_TOKEN) && !(cfg.environment ? JOB_TOKEN_COMMAND);
+      message = "Job credentials stay out of Nix settings; use credentialCommand.";
+    }];
 
-    system.activationScripts.postActivation.text = lib.mkAfter ''
-      # 1. Ensure a stable self-signed code-signing cert in the System keychain.
-      #    Created ONCE (idempotent) and reused every rebuild, so the .app's
-      #    signature - and thus the one-time Full Disk Access grant - stays stable.
-      if ! /usr/bin/security find-certificate -c ${lib.escapeShellArg cfg.signingIdentity} /Library/Keychains/System.keychain >/dev/null 2>&1; then
-        echo "creating code-signing identity ${cfg.signingIdentity} (one-time)..."
+    environment.systemPackages = [ cfg.package ];
+
+    system.activationScripts.postActivation.text = lib.mkAfter (''
+      # launchd opens StandardOutPath before the job runs; create it as the
+      # user so no parent (~/.local/state) ends up owned by root.
+      /usr/bin/sudo -u ${lib.escapeShellArg cfg.user} /bin/mkdir -p ${lib.escapeShellArg cfg.stateDir}
+    '' + lib.optionalString fda.enable ''
+      if ! /usr/bin/security find-certificate -c ${lib.escapeShellArg fda.signingIdentity} /Library/Keychains/System.keychain >/dev/null 2>&1; then
+        echo "creating code-signing identity ${fda.signingIdentity} (one-time)..."
         _t="$(/usr/bin/mktemp -d)"
-        /usr/bin/printf '[req]\ndistinguished_name=dn\nx509_extensions=v3\nprompt=no\n[dn]\nCN=%s\n[v3]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' ${lib.escapeShellArg cfg.signingIdentity} > "$_t/req.cnf"
+        /usr/bin/printf '[req]\ndistinguished_name=dn\nx509_extensions=v3\nprompt=no\n[dn]\nCN=%s\n[v3]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' ${lib.escapeShellArg fda.signingIdentity} > "$_t/req.cnf"
         /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -keyout "$_t/key.pem" -out "$_t/cert.pem" -config "$_t/req.cnf"
-        # non-empty p12 password: macOS `security` rejects empty-password PKCS12 (MAC verification fails)
+        # macOS `security` rejects empty-password PKCS12 (MAC verification fails)
         /usr/bin/openssl pkcs12 -export -inkey "$_t/key.pem" -in "$_t/cert.pem" -out "$_t/id.p12" -passout pass:mini-job-p12
         /usr/bin/security import "$_t/id.p12" -k /Library/Keychains/System.keychain -P mini-job-p12 -T /usr/bin/codesign -A
-        # NB: no add-trusted-cert - it needs a GUI auth prompt (fails over SSH), and
-        # it's unnecessary: codesign signs fine with an untrusted self-signed cert
-        # and TCC matches FDA by the designated requirement, not trust.
+        # No add-trusted-cert: it needs a GUI prompt, and TCC matches the
+        # designated requirement, not trust.
         /bin/rm -rf "$_t"
       fi
+      /bin/rm -rf ${lib.escapeShellArg appPath}
+      /bin/cp -R ${appBundle} ${lib.escapeShellArg appPath}
+      /bin/chmod -R u+w ${lib.escapeShellArg appPath}
+      /usr/bin/codesign --force --sign ${lib.escapeShellArg fda.signingIdentity} ${lib.escapeShellArg appPath}
+    '');
 
-      # 2. State dir must exist before launchd opens StandardOutPath (owned by the user).
-      /bin/mkdir -p ${lib.escapeShellArg cfg.stateDir}
-      /usr/sbin/chown ${lib.escapeShellArg cfg.user} ${lib.escapeShellArg cfg.stateDir}
-
-      # 3. Install the .app to its stable path and sign it with the stable cert.
-      echo "installing ${cfg.appInstallPath}..."
-      /bin/rm -rf ${lib.escapeShellArg cfg.appInstallPath}
-      /bin/cp -R ${appBundle} ${lib.escapeShellArg cfg.appInstallPath}
-      /bin/chmod -R u+w ${lib.escapeShellArg cfg.appInstallPath}
-      /usr/bin/codesign --force --sign ${lib.escapeShellArg cfg.signingIdentity} ${lib.escapeShellArg cfg.appInstallPath}
-    '';
-
-    launchd.user.agents.mini-job = {
-      # CHANGEME: rename
-      serviceConfig = {
-        Label = "org.example.mini-job"; # CHANGEME: rename
-        ProgramArguments = [ appExe ];
-        # launchd's default CWD is "/" (read-only); anything writing CWD-relative
-        # paths (e.g. seleniumbase downloads) needs a writable working dir.
-        WorkingDirectory = cfg.stateDir;
-        StartCalendarInterval = [
-          { Hour = cfg.hour; Minute = cfg.minute; }
-        ];
-        RunAtLoad = false;
-        StandardOutPath = "${cfg.stateDir}/launchd.log";
-        StandardErrorPath = "${cfg.stateDir}/launchd.err.log";
-      };
+    launchd.user.agents.mini-job.serviceConfig = { # CHANGEME: agents.<slug>
+      Label = cfg.label;
+      ProgramArguments = [ (if fda.enable then "${appPath}/Contents/MacOS/${fda.appName}" else exe) "watch" ];
+      EnvironmentVariables = environment;
+      RunAtLoad = true;
+      KeepAlive = true;
+      # A crashing job restarts at most every 30 s; the job itself never spins.
+      ThrottleInterval = 30;
+      ProcessType = "Background";
+      WorkingDirectory = cfg.stateDir;
+      StandardOutPath = "${cfg.stateDir}/job.log";
+      StandardErrorPath = "${cfg.stateDir}/job.log";
     };
   };
 }

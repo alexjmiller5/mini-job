@@ -1,5 +1,5 @@
 {
-  description = "CHANGEME: scheduled job on the mac mini";
+  description = "CHANGEME: outbound long-polling job on the mac mini";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -45,8 +45,9 @@
         );
     in
     {
-      # The job as a self-contained venv in the store — the mini runs THIS
-      # (via the darwin module), never a repo checkout, never `uv sync`.
+      # The job as a self-contained venv in the store - the mini runs THIS
+      # (via the darwin module), never a repo checkout, never `uv sync`. Tools
+      # it shells out to come from nixpkgs here (wrap PATH), never from brew.
       packages = forAllSystems (pkgs: {
         default = (mkPythonSet pkgs).mkVirtualEnv "mini-job-env" workspace.deps.default; # CHANGEME: rename
       });
@@ -54,7 +55,10 @@
       darwinModules.default = import ./nix/darwin.nix self;
 
       checks = forAllSystems (pkgs: {
-        credentials = import ./tests/runner.nix { inherit pkgs; };
+        cli = pkgs.runCommand "mini-job-cli" { } ''
+          ${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/job --help
+          touch $out
+        '';
       });
 
       devShells = forAllSystems (pkgs: {

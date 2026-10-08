@@ -1,7 +1,7 @@
 [project]
 name = "mini-job"
 version = "0.1.0"
-description = "CHANGEME: scheduled job on the mac mini (residential IP / Apple data)"
+description = "CHANGEME: outbound long-polling job on the mac mini (residential IP / Apple data)"
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28",
@@ -9,6 +9,9 @@ dependencies = [
     "pydantic-settings>=2.7",
     "structlog>=25.1",
 ]
+
+[project.scripts]
+job = "job.main:cli" # CHANGEME: the executable name
 
 [build-system]
 requires = ["hatchling"]

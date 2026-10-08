@@ -1,24 +1,19 @@
 # Mini Job template
 
-Python jobs that need residential networking, Apple data or local hardware.
-The application is a Nix package, with an optional nix-darwin launchd module and
-signed app wrapper for TCC-protected data.
+A Python job for the mac mini that holds an outbound long poll open against its
+service (the Life Data hub's `durable-pull-v1` subscription API) and acts on each
+delivered batch. The service never connects to the mini.
 
-Use `just run`, `just test`, `just check`, `just fmt` and `just logs`.
-`nix build` builds the locked application. `nix-build tests/runner.nix --no-out-link`
-tests the credential seam without provider access.
+- `nix build` builds the locked application; `darwinModules.default` installs it
+  as a kept-alive launchd user agent (`job watch`), optionally inside a signed
+  .app for Full Disk Access.
+- `just dev` runs the watcher with your environment, `just run` one pass,
+  `just test` / `just check` / `just fmt`, `just logs` tails the installed log.
+- Configuration is `JOB_*` environment variables: `JOB_SERVICE_URL`,
+  `JOB_SUBSCRIPTION_ID`, `JOB_STATE_DIR` (default `~/.local/state/<slug>`), and the
+  credential as `JOB_TOKEN` or `JOB_TOKEN_COMMAND` (JSON argv printing it).
+- The job's credential is its own, minted by the service. On macOS store it in
+  the login Keychain from the desktop session (ssh sessions cannot write it) and
+  point `credentialCommand` at `security find-generic-password ... -w`.
 
-State and logs belong in the configured application-support directory, exported
-as `JOB_STATE_DIR`. The installed job runs packaged code, never a checkout.
-
-Consumer credentials come from supported native enrollment or caller-prepared
-environment variables. The optional `credentialCommands` module setting maps each
-variable name to a command returning its credential. Failed commands prevent the
-job from starting. Keep credential values out of Nix and source control. No
-provider account or machine-vault token is required by the template.
-
-The signed wrapper is for jobs needing Full Disk Access. Document the manual TCC
-grant and any native sign-in in the generated project's README. A networking-only
-job can instead use a plain packaged home-manager service.
-
-See the checklist in [AGENTS.md](AGENTS.md) before generating a project.
+See [AGENTS.md](AGENTS.md) for the architecture and the new-project checklist.
