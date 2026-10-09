@@ -1,7 +1,7 @@
 # Mini Job template
 
 A Python job for the mac mini that holds an outbound long poll open against its
-service (the Life Data hub's `durable-pull-v1` subscription API) and acts on each
+service (the Soma hub's `durable-pull-v1` subscription API) and acts on each
 delivered batch. The service never connects to the mini.
 
 - `nix build` builds the locked application; `darwinModules.default` installs it

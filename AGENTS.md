@@ -10,9 +10,9 @@ webhook, or timer polling a table. The mini runs ONE long-lived launchd user
 agent (`job watch`) that holds an outbound long poll open, so it reacts within
 about a second and costs nothing while idle. screentime-dashboard's ingest
 watcher is the original instance; Page Archiver and Media Center's YouTube
-offline job use the shared Life Data form below.
+offline job use the shared Soma form below.
 
-- **Protocol: `durable-pull-v1`**, the Life Data hub's subscription outbox.
+- **Protocol: `durable-pull-v1`**, the Soma hub's subscription outbox.
   `GET /v1/subscriptions/<id>/events?wait=30` holds up to 30 s;
   `POST /v1/subscriptions/<id>/ack {delivery_id}` advances the cursor. The hub
   records the selected columns' changes in the same transaction as the row
@@ -40,13 +40,13 @@ offline job use the shared Life Data form below.
 ## Credentials
 
 - The job holds its OWN credential, minted by the service for this caller.
-  Life Data: follow its consumer-access standard (`docs/consumer-access.md`):
+  Soma: follow its consumer-access standard (`docs/consumer-access.md`):
   the operator adds a named profile with the exact grants to the hub's
   `ENROLLMENT_PROFILES` (`subscriptions:consume:<id>` plus `tables:read:<table>`
   for every subscription source, column `tables:read:`/`tables:patch:` grants
   for result columns, `files:read:`/`files:write:<prefix>/`), registers any
-  file prefix, then enrolls headlessly: `life login --profile <id> --start
-  <state>`, the owner approves the printed link, `life login --claim <state>
+  file prefix, then enrolls headlessly: `soma login --profile <id> --start
+  <state>`, the owner approves the printed link, `soma login --claim <state>
   --wait` prints the token once. A service of its own uses app-native browser
   enrollment (`screentime-ingest login`). Never an operator, admin, CI or
   machine-vault token. Rotating or revoking it touches only this job.

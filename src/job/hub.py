@@ -1,4 +1,4 @@
-"""Outbound client for a durable-pull-v1 subscription (the Life Data hub's outbox).
+"""Outbound client for a durable-pull-v1 subscription (the Soma hub's outbox).
 
 GET  /v1/subscriptions/<id>/events?wait=N  holds up to 30 s; the same batch is
                                            offered until it is acknowledged
